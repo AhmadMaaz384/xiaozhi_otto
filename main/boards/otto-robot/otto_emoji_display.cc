@@ -213,24 +213,37 @@ void OttoEmojiDisplay::SetupIdleClockUI() {
     // never need anything else changed - but OTTO_IDLE_CLOCK_STYLE is a
     // compile-time macro, not a runtime switch, so there was never an
     // actual benefit to that: the inactive face's widgets can never be
-    // shown without a rebuild anyway. And keeping them around, merely
-    // hidden, turned out to have a real cost: the large analog_face_ scale
-    // widget sitting in the same z-position as clock_time_label_ (which is
-    // both transform-scaled and re-rendered every second) was the actual
-    // cause of a tearing/"italic" rendering bug on the digital face - see
-    // clock.md. Building only what's needed removes that entirely.
+    // shown without a rebuild anyway. (This was tried as one candidate fix
+    // for a tearing bug that turned out to be an SPI clock speed issue, not
+    // a widget one - see InitializeLcdDisplay() in otto_robot.cc for the
+    // real root cause/fix. Kept anyway since it's simply less to build.)
 #if OTTO_IDLE_CLOCK_STYLE == ANALOG
     SetupAnalogClockUI();
 #else
     clock_time_label_ = lv_label_create(clock_container_);
-    lv_label_set_text(clock_time_label_, "--:--");
+    // "88:88" (not the "--:--" actually shown below) - widest realistic
+    // digit combination, used only to measure a safe fixed width immediately
+    // below. Some fonts don't give every digit the same advance width, so
+    // measuring against dashes could freeze a box too narrow for e.g. "8".
+    lv_label_set_text(clock_time_label_, "88:88");
     lv_obj_set_style_text_color(clock_time_label_, lv_color_white(), 0);
     // Scale the normal text font up instead of pulling in a new large font
     // asset - LVGL's 256 == 100% fixed-point scale convention. Kept modest
     // (2x) so "HH:MM" reliably fits within a 128px-wide screen; 3x clipped
     // the minutes off the edge.
     lv_obj_set_style_transform_scale(clock_time_label_, 512, 0);
+    lv_obj_set_style_text_align(clock_time_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(clock_time_label_, LV_ALIGN_CENTER, 0, -10);
+    // Freeze the label's own width instead of leaving it on LVGL's default
+    // auto-content sizing (LV_SIZE_CONTENT), so a real text change can never
+    // resize/reposition this transform-scaled widget. Another candidate fix
+    // tried for the tearing bug mentioned above (didn't turn out to be the
+    // cause either - see otto_robot.cc), but a reasonable defensive habit
+    // for a transform-scaled label with dynamic content regardless, so it's
+    // kept.
+    lv_obj_update_layout(clock_time_label_);  // force sizing now, before freezing it
+    lv_obj_set_width(clock_time_label_, lv_obj_get_width(clock_time_label_));
+    lv_label_set_text(clock_time_label_, "--:--");  // now safe - width is fixed, no resize triggered
 
     clock_date_label_ = lv_label_create(clock_container_);
     lv_label_set_text(clock_date_label_, "");
@@ -319,19 +332,23 @@ void OttoEmojiDisplay::UpdateIdleClockTime() {
 
     {
         DisplayLockGuard lock(this);
-        if (clock_time_label_ != nullptr) {
+        // Only push text that actually changed - lv_label_set_text() has no
+        // same-text fast path in this LVGL version (see the member comment
+        // on last_clock_time_str_/last_clock_date_str_ in the header): every
+        // call unconditionally invalidates and recomputes the label's
+        // auto-content size, even when the string is identical to what's
+        // already shown. This function runs every second but HH:MM/date
+        // only actually change once a minute/day, so without this guard the
+        // label was being pushed through a pointless invalidate+resize cycle
+        // 59 out of every 60 seconds - wasteful regardless of the display's
+        // actual tearing bug (traced to SPI clock speed - see otto_robot.cc).
+        if (clock_time_label_ != nullptr && strcmp(time_str, last_clock_time_str_) != 0) {
             lv_label_set_text(clock_time_label_, time_str);
-            // clock_time_label_ has a transform_scale applied (see
-            // SetupIdleClockUI()) - LVGL's automatic dirty-region tracking
-            // doesn't always account for the scale on a widget whose text
-            // keeps changing, so only part of the glyph gets redrawn on
-            // some ticks (looked like the digits going italic/torn after
-            // ~1s). Force a full clean redraw of the transformed area every
-            // update instead of relying on that.
-            lv_obj_invalidate(clock_time_label_);
+            strncpy(last_clock_time_str_, time_str, sizeof(last_clock_time_str_) - 1);
         }
-        if (clock_date_label_ != nullptr) {
+        if (clock_date_label_ != nullptr && strcmp(date_str, last_clock_date_str_) != 0) {
             lv_label_set_text(clock_date_label_, date_str);
+            strncpy(last_clock_date_str_, date_str, sizeof(last_clock_date_str_) - 1);
         }
     }
 
@@ -339,13 +356,13 @@ void OttoEmojiDisplay::UpdateIdleClockTime() {
     // Lock released above before this call - it takes its own lock, and the
     // lock is not re-entrant. Only done when analog is actually the active
     // face: this used to run unconditionally (every tick, even in DIGITAL
-    // mode, touching the hidden hand line objects) which turned out to be
-    // the actual cause of the digital clock's tearing/"italic" look - the
-    // extra lock release+reacquire plus lv_line_set_points() on the hidden
-    // lines every second, right after the label text update, corrupted the
-    // panel's partial redraw of the scaled time label from the second tick
-    // onward. Gating it here restores the digital path to exactly one
-    // lock scope doing exactly one thing per tick, same as before the
+    // mode, touching the hidden hand line objects), which was one of
+    // several candidates investigated for a display-wide tearing/"italic"
+    // bug that turned out to be an SPI clock speed issue (see
+    // InitializeLcdDisplay() in otto_robot.cc), not this. Left gated anyway
+    // since there's no reason to touch the analog hands while they're not
+    // even shown. Restores the digital path to exactly one lock scope doing
+    // exactly one thing per tick, same as before the
     // analog clock existed.
     UpdateAnalogClockHands(tm_info->tm_hour, tm_info->tm_min);
 #endif

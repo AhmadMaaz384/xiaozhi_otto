@@ -26,6 +26,13 @@ touched, all board-specific to otto-robot (no core/shared code changed):
    `Lang::Sounds::OGG_VIBRATION`, and queues a `shake_leg` servo action
    (3 steps, speed 400, same as if `self.otto.action` had been called with
    `action: "shake_leg"`).
+5. The `"shocked"` emotion doesn't stay up indefinitely: a one-shot timer
+   (`kShakeRevertMs = 7000` in `otto_robot.cc`) reverts back to `"neutral"`
+   7 seconds after the shake, but only if the device is still idle at that
+   point - if real activity (e.g. the wake word) happens first, the normal
+   emotion/state flow takes over instead and the timer's revert is skipped.
+   A second shake within that window restarts the 7-second window rather
+   than stacking a second revert.
 
 Confirmed working on real hardware — see the September 2026 testing session:
 multiple real shakes each correctly triggered all three parts of the

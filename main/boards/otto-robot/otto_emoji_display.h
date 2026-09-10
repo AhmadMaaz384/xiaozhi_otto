@@ -90,5 +90,22 @@ class OttoEmojiDisplay : public SpiLcdDisplay {
     bool clock_visible_ = false;
     std::chrono::steady_clock::time_point idle_since_{};
 
+    // Last strings actually pushed to the digital labels. lv_label_set_text()
+    // has no same-text fast path in this LVGL version - it unconditionally
+    // reallocates the text buffer and calls both lv_obj_invalidate() and
+    // lv_obj_refresh_self_size() on every call, even when the string is
+    // byte-identical to what's already shown. UpdateIdleClockTime() runs
+    // every second, but HH:MM/date only actually change once a minute/day,
+    // so without this guard the label was being pushed through a pointless
+    // invalidate+resize cycle 59 out of every 60 seconds. This was one of
+    // several candidate fixes tried for a tearing/"italic" rendering bug
+    // that turned out to actually be an SPI clock speed issue, not this
+    // (see InitializeLcdDisplay() in otto_robot.cc for the real cause/fix) -
+    // kept anyway since skipping pointless redraws is good practice
+    // regardless. Only call lv_label_set_text() when the formatted string
+    // has actually changed since last tick.
+    char last_clock_time_str_[16] = {};
+    char last_clock_date_str_[32] = {};
+
     static constexpr int64_t kIdleClockDelayMs = 30000;  // 30s continuously idle
 };

@@ -286,7 +286,22 @@ private:
         io_config.cs_gpio_num = hw_config_.display_cs_pin;
         io_config.dc_gpio_num = hw_config_.display_dc_pin;
         io_config.spi_mode = DISPLAY_SPI_MODE;
-        io_config.pclk_hz = 40 * 1000 * 1000;
+        // Dropped from 40MHz - confirmed fix for a display-wide tearing bug
+        // (looked like "italic"/sheared text on the idle clock and
+        // tic-tac-toe, but even static untouched grid lines teared too).
+        // Root cause: SPI signal integrity, not software. On the custom
+        // veroboard's hand-soldered wiring (this pin set was remapped for
+        // the prototype - see the pin-planning notes in clock.md/imu.md),
+        // 40MHz didn't leave enough margin for the ST7789's address-window
+        // command bytes to arrive intact on every transaction; a corrupted
+        // bit there shifts where the panel starts writing incoming pixel
+        // data, producing exactly the shear that was seen. Only shows up
+        // when a real SPI transaction actually fires (i.e. when content
+        // visibly changes), which is why it looked content-dependent rather
+        // than constant. 10MHz gives each bit ~4x longer to settle and has
+        // tested clean; raise it again only after re-testing on real
+        // hardware if display responsiveness ever needs to be faster.
+        io_config.pclk_hz = 10 * 1000 * 1000;
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
         io_config.lcd_param_bits = 8;
