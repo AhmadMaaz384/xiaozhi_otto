@@ -141,19 +141,20 @@ constexpr HardwareConfig NON_CAMERA_VERSION_CONFIG = {
     .audio_i2s_spk_gpio_bclk = GPIO_NUM_15,
     .audio_i2s_spk_gpio_lrck = GPIO_NUM_16,
 
-    .display_backlight_pin = GPIO_NUM_3,
-    .display_mosi_pin = GPIO_NUM_10,
-    .display_clk_pin = GPIO_NUM_9,
-    .display_dc_pin = GPIO_NUM_46,
-    .display_rst_pin = GPIO_NUM_11,
-    .display_cs_pin = GPIO_NUM_12,
-  
+    // the working ones
     // .display_backlight_pin = GPIO_NUM_3,
-    // .display_cs_pin = GPIO_NUM_46,
-    // .display_dc_pin = GPIO_NUM_9,
-    // .display_rst_pin = GPIO_NUM_10,
-    // .display_mosi_pin = GPIO_NUM_11,
-    // .display_clk_pin = GPIO_NUM_12,
+    // .display_mosi_pin = GPIO_NUM_10,
+    // .display_clk_pin = GPIO_NUM_9,
+    // .display_dc_pin = GPIO_NUM_46,
+    // .display_rst_pin = GPIO_NUM_11,
+    // .display_cs_pin = GPIO_NUM_12,
+    
+    .display_backlight_pin = GPIO_NUM_3,
+    .display_mosi_pin = GPIO_NUM_11,
+    .display_clk_pin = GPIO_NUM_12,
+    .display_dc_pin = GPIO_NUM_9,
+    .display_rst_pin = GPIO_NUM_10,
+    .display_cs_pin = GPIO_NUM_46,
 
     // Reserved for an MPU6050 (not wired up in code yet - see clock.md-style
     // planning discussion). GPIO13/8 were the other candidate pair; 17/18
