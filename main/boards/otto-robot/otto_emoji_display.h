@@ -41,16 +41,33 @@ class OttoEmojiDisplay : public SpiLcdDisplay {
     virtual void SetupUI() override;
     virtual void UpdateStatusBar(bool update_all = false) override;
 
-    // Full-screen tic-tac-toe board, driven entirely by the self.otto.tictactoe_*
-    // MCP tools (otto_controller.cc) - not tied to idle state at all, unlike
-    // the idle clock below: it has to stay up through normal conversation
-    // turns (each move *is* a conversation turn), so SetStatus()/SetEmotion()
-    // deliberately don't touch it. Cell numbers are 1-9, phone-keypad style;
-    // `mark` is 'X', 'O', or ' ' to restore the plain cell number (used on
-    // Reset()/a new game).
+    // For activity that doesn't change the device state (web page, trigger
+    // script): hides the idle clock if it's up, which also re-attaches the
+    // servos, and restarts the idle countdown.
+    void NotifyActivity();
+
+    // Full-screen tic-tac-toe board, shown by the self.otto.tictactoe_* MCP
+    // tools (otto_controller.cc). It has to stay up through normal
+    // conversation turns (each move *is* a conversation turn), so
+    // SetStatus()/SetEmotion() deliberately don't touch it. Cell numbers are
+    // 1-9, phone-keypad style; `mark` is 'X', 'O', or ' ' to restore the plain
+    // cell number (used on Reset()/a new game).
+    //
+    // The board also hides itself (UpdateTicTacToeAutoHide()), because the
+    // LLM can't be relied on to call self.otto.tictactoe_stop - and on
+    // "goodbye" the session closes before it gets the chance:
+    //  - kTicTacToeResultHoldMs after MarkTicTacToeFinished() (win/draw), so
+    //    the final position stays readable for a moment first, then switches
+    //    to `result_emotion` (an emoji-collection name like "happy"/"sad",
+    //    must be a string literal - only the pointer is stored; nullptr
+    //    leaves the current emotion alone);
+    //  - after kTicTacToeAbandonMs of the device sitting continuously idle
+    //    (conversation ended mid-game). Mid-game the device is listening or
+    //    speaking, not idle, so this doesn't fire during real play.
     void ShowTicTacToe();
     void HideTicTacToe();
     void SetTicTacToeCell(int cell_number, char mark);
+    void MarkTicTacToeFinished(const char* result_emotion);
     bool IsTicTacToeVisible() const { return tic_tac_toe_visible_; }
 
    private:
@@ -74,10 +91,17 @@ class OttoEmojiDisplay : public SpiLcdDisplay {
     void UpdateAnalogClockHands(int hour, int minute);
 
     void SetupTicTacToeUI();
+    void UpdateTicTacToeAutoHide();
 
     lv_obj_t* tic_tac_toe_container_ = nullptr;
     lv_obj_t* tic_tac_toe_cells_[9] = {};  // index 0..8 = cell number 1..9
     bool tic_tac_toe_visible_ = false;
+    // Zero (default-constructed) = not set. Only touched from the main task:
+    // the MCP tool handlers run there via Application::Schedule(), and so
+    // does UpdateStatusBar() (MAIN_EVENT_CLOCK_TICK).
+    std::chrono::steady_clock::time_point tic_tac_toe_finished_at_{};
+    std::chrono::steady_clock::time_point tic_tac_toe_idle_since_{};
+    const char* tic_tac_toe_result_emotion_ = nullptr;
 
     lv_obj_t* clock_container_ = nullptr;
     lv_obj_t* clock_time_label_ = nullptr;
@@ -108,4 +132,6 @@ class OttoEmojiDisplay : public SpiLcdDisplay {
     char last_clock_date_str_[32] = {};
 
     static constexpr int64_t kIdleClockDelayMs = 30000;  // 30s continuously idle
+    static constexpr int64_t kTicTacToeResultHoldMs = 10000;  // final board shown 10s
+    static constexpr int64_t kTicTacToeAbandonMs = 60000;     // 60s idle mid-game
 };

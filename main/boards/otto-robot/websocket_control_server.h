@@ -24,7 +24,8 @@ private:
     std::map<int, httpd_req_t*> clients_;
 
     static esp_err_t ws_handler(httpd_req_t *req);
-    
+    static esp_err_t page_handler(httpd_req_t* req);
+
     void HandleMessage(httpd_req_t *req, const char* data, size_t len);
     void AddClient(httpd_req_t *req);
     void RemoveClient(httpd_req_t *req);

@@ -103,9 +103,9 @@ constexpr HardwareConfig CAMERA_VERSION_CONFIG = {
 };
 
 constexpr HardwareConfig NON_CAMERA_VERSION_CONFIG = {
-    .power_charge_detect_pin = GPIO_NUM_21,
+    .power_charge_detect_pin = GPIO_NUM_14,
     .power_adc_unit = ADC_UNIT_2,
-    .power_adc_channel = ADC_CHANNEL_3,
+    .power_adc_channel = ADC_CHANNEL_2,  // GPIO13
 
     // Regrouped onto adjacent pins for a custom veroboard prototype (was
     // 39/38/17/18/8/12, scattered across the module). GPIO38 deliberately

@@ -21,6 +21,13 @@
 // -- Servo delta limit default. degree / sec
 #define SERVO_LIMIT_DEFAULT 240
 
+// -- Hard angle range (degrees, after trim) for the leg and foot servos.
+// The EMO-style body leaves very little clearance between the legs, so any
+// move/oscillation outside this range is clamped. Home is still 90. Hands
+// keep the full 0-180 range.
+#define LEG_FOOT_MIN_ANGLE 50
+#define LEG_FOOT_MAX_ANGLE 130
+
 // -- Servo indexes for easy access
 #define LEFT_LEG 0
 #define RIGHT_LEG 1

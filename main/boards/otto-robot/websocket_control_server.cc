@@ -1,5 +1,6 @@
 #include "websocket_control_server.h"
 #include "mcp_server.h"
+#include "otto_web_page.h"
 #include <esp_log.h>
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -84,11 +85,27 @@ esp_err_t WebSocketControlServer::ws_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+esp_err_t WebSocketControlServer::page_handler(httpd_req_t* req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, kOttoWebPage, sizeof(kOttoWebPage) - 1);
+}
+
 bool WebSocketControlServer::Start(int port) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.max_open_sockets = 7;
     config.ctrl_port = 32769;
+    // Browsers keep idle keep-alive sockets open; recycle the oldest instead
+    // of refusing new connections once all 7 are taken.
+    config.lru_purge_enable = true;
+
+    httpd_uri_t page_uri = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = page_handler,
+        .user_ctx = nullptr,
+    };
 
     httpd_uri_t ws_uri = {
         .uri = "/ws",
@@ -99,8 +116,9 @@ bool WebSocketControlServer::Start(int port) {
     };
 
     if (httpd_start(&server_handle_, &config) == ESP_OK) {
+        httpd_register_uri_handler(server_handle_, &page_uri);
         httpd_register_uri_handler(server_handle_, &ws_uri);
-        ESP_LOGI(TAG, "WebSocket server started on port %d", port);
+        ESP_LOGI(TAG, "Control server started on port %d (web page at /, WebSocket at /ws)", port);
         return true;
     }
 

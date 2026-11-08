@@ -18,8 +18,10 @@
 #define TAG "OttoEmojiDisplay"
 
 // Defined in otto_controller.cc; lets the idle clock release/restore servo
-// holding torque without the display needing to know about OttoController.
+// holding torque, and wait for Otto to stop moving, without the display
+// needing to know about OttoController.
 extern void SetOttoServosAttached(bool attached);
+extern bool IsOttoActionInProgress();
 
 OttoEmojiDisplay::OttoEmojiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                                    int width, int height, int offset_x, int offset_y, bool mirror_x,
@@ -316,6 +318,14 @@ void OttoEmojiDisplay::HideIdleClock() {
     SetOttoServosAttached(true);
 }
 
+void OttoEmojiDisplay::NotifyActivity() {
+    if (clock_visible_) {
+        HideIdleClock();  // also resets idle_since_ and re-attaches the servos
+    } else {
+        idle_since_ = {};
+    }
+}
+
 void OttoEmojiDisplay::UpdateIdleClockTime() {
     time_t now = time(NULL);
     struct tm* tm_info = localtime(&now);
@@ -494,6 +504,13 @@ void OttoEmojiDisplay::ShowTicTacToe() {
         HideIdleClock();
     }
 
+    // A new game can start while the previous one's finished board is still
+    // up (ShowTicTacToe() then returns early below), so clear the auto-hide
+    // timers first - otherwise the old game's countdown would hide the new one.
+    tic_tac_toe_finished_at_ = {};
+    tic_tac_toe_idle_since_ = {};
+    tic_tac_toe_result_emotion_ = nullptr;
+
     DisplayLockGuard lock(this);
     if (tic_tac_toe_container_ == nullptr || tic_tac_toe_visible_) {
         return;
@@ -511,6 +528,9 @@ void OttoEmojiDisplay::HideTicTacToe() {
     // idle clock could judge itself already 30s+ overdue the instant the
     // game ends, using a timestamp from before the game even started.
     idle_since_ = {};
+    tic_tac_toe_finished_at_ = {};
+    tic_tac_toe_idle_since_ = {};
+    tic_tac_toe_result_emotion_ = nullptr;
 
     DisplayLockGuard lock(this);
     if (!tic_tac_toe_visible_) {
@@ -546,10 +566,56 @@ void OttoEmojiDisplay::SetTicTacToeCell(int cell_number, char mark) {
     lv_obj_set_style_text_color(label, color, 0);
 }
 
+void OttoEmojiDisplay::MarkTicTacToeFinished(const char* result_emotion) {
+    if (tic_tac_toe_visible_) {
+        tic_tac_toe_finished_at_ = std::chrono::steady_clock::now();
+        tic_tac_toe_result_emotion_ = result_emotion;
+    }
+}
+
+void OttoEmojiDisplay::UpdateTicTacToeAutoHide() {
+    if (!tic_tac_toe_visible_) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = [now](std::chrono::steady_clock::time_point since) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - since).count();
+    };
+
+    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+        tic_tac_toe_idle_since_ = {};
+    } else if (tic_tac_toe_idle_since_.time_since_epoch().count() == 0) {
+        tic_tac_toe_idle_since_ = now;
+    }
+
+    if (tic_tac_toe_finished_at_.time_since_epoch().count() != 0 &&
+        elapsed_ms(tic_tac_toe_finished_at_) >= kTicTacToeResultHoldMs) {
+        // HideTicTacToe() clears the stored emotion, so grab it first. Set it
+        // only after the board is gone: SetEmotion() takes its own display
+        // lock, and the face should appear as the board disappears.
+        const char* emotion = tic_tac_toe_result_emotion_;
+        ESP_LOGI(TAG, "Tic-tac-toe game over, hiding board (emotion: %s)",
+                 emotion != nullptr ? emotion : "unchanged");
+        HideTicTacToe();
+        if (emotion != nullptr) {
+            SetEmotion(emotion);
+        }
+    } else if (tic_tac_toe_idle_since_.time_since_epoch().count() != 0 &&
+               elapsed_ms(tic_tac_toe_idle_since_) >= kTicTacToeAbandonMs) {
+        ESP_LOGI(TAG, "Tic-tac-toe abandoned (device idle), hiding board");
+        HideTicTacToe();
+    }
+}
+
 void OttoEmojiDisplay::UpdateStatusBar(bool update_all) {
     // Keep the existing small status-bar behaviour (network/battery icons,
     // the small HH:MM text) exactly as before.
     SpiLcdDisplay::UpdateStatusBar(update_all);
+
+    // Outside the OTTO_IDLE_CLOCK_ENABLED block below on purpose: a stuck
+    // board needs clearing whether or not the idle clock is compiled in.
+    UpdateTicTacToeAutoHide();
 
 #if OTTO_IDLE_CLOCK_ENABLED
     auto& app = Application::GetInstance();
@@ -565,7 +631,9 @@ void OttoEmojiDisplay::UpdateStatusBar(bool update_all) {
     }
 
     auto now = std::chrono::steady_clock::now();
-    if (idle_since_.time_since_epoch().count() == 0) {
+    // Moving counts as activity even with no conversation (web page), so the
+    // clock and its servo detach can't land in the middle of a long move.
+    if (IsOttoActionInProgress() || idle_since_.time_since_epoch().count() == 0) {
         idle_since_ = now;
     }
 
@@ -573,6 +641,8 @@ void OttoEmojiDisplay::UpdateStatusBar(bool update_all) {
         std::chrono::duration_cast<std::chrono::milliseconds>(now - idle_since_).count();
     // Don't let the idle clock take over mid-game - a real gap between
     // moves (the human thinking) can easily cross the 30s idle threshold.
+    // An abandoned board is cleared by UpdateTicTacToeAutoHide() above
+    // instead (which resets idle_since_), so the clock follows 30s later.
     if (!clock_visible_ && !tic_tac_toe_visible_ && idle_ms >= kIdleClockDelayMs) {
         ShowIdleClock();
     }

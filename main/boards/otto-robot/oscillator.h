@@ -41,6 +41,12 @@ public:
     void SetTrim(int trim) { trim_ = trim; };
     void SetLimiter(int diff_limit) { diff_limit_ = diff_limit; };
     void DisableLimiter() { diff_limit_ = 0; };
+    // Hard range for the angle actually sent to the servo (after trim), in
+    // 0-180 degrees. Default is the full 0-180.
+    void SetAngleLimits(int min_angle, int max_angle) {
+        min_angle_ = min_angle;
+        max_angle_ = max_angle;
+    };
     int GetTrim() { return trim_; };
     void SetPosition(int position);
     void Stop() { stop_ = true; };
@@ -67,6 +73,8 @@ private:
     int pos_;                       //-- Current servo pos
     int pin_;                       //-- Pin where the servo is connected
     int trim_;                      //-- Calibration offset
+    int min_angle_ = 0;             //-- Output angle limits (see SetAngleLimits())
+    int max_angle_ = 180;
     double phase_;                  //-- Current phase
     double inc_;                    //-- Increment of phase
     double number_samples_;         //-- Number of samples

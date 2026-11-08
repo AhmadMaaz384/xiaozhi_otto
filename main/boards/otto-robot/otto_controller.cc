@@ -449,7 +449,12 @@ private:
                  speed, direction, amount);
 
         OttoActionParams params = {action_type, steps, speed, direction, amount, ""};
-        xQueueSend(action_queue_, &params, portMAX_DELAY);
+        // Callers run on the main task, so never block it: a full queue means
+        // moves are being requested (e.g. button mashing) faster than Otto can do them.
+        if (xQueueSend(action_queue_, &params, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Action queue full, dropping action %d", action_type);
+            return;
+        }
         StartActionTaskIfNeeded();
     }
 
@@ -489,6 +494,32 @@ private:
     // somehow hasn't been created yet.
     OttoEmojiDisplay* GetOttoDisplay() {
         return static_cast<OttoEmojiDisplay*>(Board::GetInstance().GetDisplay());
+    }
+
+    // Movement commands can arrive while the device is idle (web page, trigger
+    // script), when the idle clock may be up and the servos detached -
+    // Oscillator::Write() silently ignores detached servos.
+    void WakeForMovement() {
+        auto* display = GetOttoDisplay();
+        if (display != nullptr) {
+            display->NotifyActivity();
+        }
+    }
+
+    // Face Otto shows once a finished tic-tac-toe board clears, from Otto's
+    // side (Otto is O, the human is X). Names must exist in the otto-gif
+    // emoji collection. nullptr = game still in progress, leave face alone.
+    static const char* TicTacToeResultEmotion(TicTacToe::Result result) {
+        switch (result) {
+            case TicTacToe::Result::kOWins:
+                return "happy";
+            case TicTacToe::Result::kXWins:
+                return "sad";
+            case TicTacToe::Result::kDraw:
+                return "neutral";
+            default:
+                return nullptr;
+        }
     }
 
     void LoadTrimsFromNVS() {
@@ -559,6 +590,7 @@ public:
                                Property("arm_swing", kPropertyTypeInteger, 50, 0, 170)
                            }),
                            [this](const PropertyList& properties) -> ReturnValue {
+                               WakeForMovement();
                                std::string action = properties["action"].value<std::string>();
                                // 所有参数都有默认值，直接访问即可
                                int steps = properties["steps"].value<int>();
@@ -708,6 +740,7 @@ public:
                                    "{\"a\":[{\"s\":{\"ll\":90,\"rl\":90},\"v\":1000}]}")}),
             [this](const PropertyList& properties) -> ReturnValue {
                 std::string sequence = properties["sequence"].value<std::string>();
+                WakeForMovement();
                 // 检查是否是JSON对象（可能是字符串格式或已解析的对象）
                 // 如果sequence是JSON字符串，直接使用；如果是对象字符串，也需要使用
                 QueueServoSequence(sequence.c_str());
@@ -717,6 +750,7 @@ public:
 
         mcp_server.AddTool("self.otto.stop", "立即停止所有动作并复位", PropertyList(),
                            [this](const PropertyList& properties) -> ReturnValue {
+                               WakeForMovement();
                                if (action_task_handle_ != nullptr) {
                                    vTaskDelete(action_task_handle_);
                                    action_task_handle_ = nullptr;
@@ -882,6 +916,10 @@ public:
 
                                auto result = tic_tac_toe_.GetResult();
                                if (result != TicTacToe::Result::kInProgress) {
+                                   // Starts the display's hold-then-hide countdown
+                                   // (then shows the result face); the LLM rarely
+                                   // calls tictactoe_stop itself.
+                                   display->MarkTicTacToeFinished(TicTacToeResultEmotion(result));
                                    return "{\"valid\":true,\"otto_cell\":0,\"result\":\"" +
                                           std::string(result == TicTacToe::Result::kXWins ? "x_wins"
                                                                                            : "draw") +
@@ -899,6 +937,10 @@ public:
                                    case TicTacToe::Result::kDraw: result_str = "draw"; break;
                                    default: break;
                                }
+                               if (tic_tac_toe_.IsGameOver()) {
+                                   display->MarkTicTacToeFinished(
+                                       TicTacToeResultEmotion(tic_tac_toe_.GetResult()));
+                               }
                                return "{\"valid\":true,\"otto_cell\":" + std::to_string(otto_cell) +
                                       ",\"result\":\"" + result_str + "\"}";
                            });
@@ -906,8 +948,18 @@ public:
         mcp_server.AddTool("self.otto.tictactoe_stop", "结束当前的井字棋游戏，恢复正常表情显示",
                            PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
                                auto* display = GetOttoDisplay();
+                               // Same result face as the auto-hide path, but only if
+                               // the board is actually still up - after an auto-hide
+                               // the face was already shown and may have changed since.
                                if (display != nullptr) {
+                                   const char* emotion =
+                                       display->IsTicTacToeVisible()
+                                           ? TicTacToeResultEmotion(tic_tac_toe_.GetResult())
+                                           : nullptr;
                                    display->HideTicTacToe();
+                                   if (emotion != nullptr) {
+                                       display->SetEmotion(emotion);
+                                   }
                                }
                                tic_tac_toe_.Reset();
                                return true;
@@ -955,6 +1007,8 @@ public:
         QueueAction(ACTION_SHAKE_LEG, 3, 400, 1, 0);
     }
 
+    bool IsActionInProgress() const { return is_action_in_progress_; }
+
     ~OttoController() {
         if (action_task_handle_ != nullptr) {
             vTaskDelete(action_task_handle_);
@@ -977,6 +1031,10 @@ void SetOttoServosAttached(bool attached) {
     if (g_otto_controller != nullptr) {
         g_otto_controller->SetServosAttached(attached);
     }
+}
+
+bool IsOttoActionInProgress() {
+    return g_otto_controller != nullptr && g_otto_controller->IsActionInProgress();
 }
 
 // Called from the MPU6050 shake-detection task in otto_robot.cc.

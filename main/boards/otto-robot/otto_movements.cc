@@ -47,6 +47,10 @@ void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int 
     // 检查是否有手部舵机
     has_hands_ = (left_hand != -1 && right_hand != -1);
 
+    for (int i : {LEFT_LEG, RIGHT_LEG, LEFT_FOOT, RIGHT_FOOT}) {
+        servo_[i].SetAngleLimits(LEG_FOOT_MIN_ANGLE, LEG_FOOT_MAX_ANGLE);
+    }
+
     AttachServos();
     is_otto_resting_ = false;
 }

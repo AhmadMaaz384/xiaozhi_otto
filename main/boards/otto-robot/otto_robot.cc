@@ -410,6 +410,8 @@ public:
 private:
     void InitializeWebSocketControlServer() {
         ws_control_server_ = new WebSocketControlServer();
+        // Not port 80: the Wi-Fi config portal starts its own server there with
+        // ESP_ERROR_CHECK, so holding 80 would crash-loop the board on fallback.
         if (!ws_control_server_->Start(8080)) {
             delete ws_control_server_;
             ws_control_server_ = nullptr;

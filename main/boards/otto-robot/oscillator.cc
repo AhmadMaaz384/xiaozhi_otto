@@ -173,7 +173,7 @@ void Oscillator::Write(int position) {
 
     int angle = pos_ + trim_;
 
-    angle = std::min(std::max(angle, 0), 180);
+    angle = std::min(std::max(angle, min_angle_), max_angle_);
 
     uint32_t duty = (uint32_t)(((angle / 180.0) * 2.0 + 0.5) * 8191 / 20.0);
 
